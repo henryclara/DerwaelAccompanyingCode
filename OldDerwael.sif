@@ -1,0 +1,459 @@
+#  Run with bedrock/surface from Derwael, 
+#  --------------------------------------
+#  thermal 		: TS=-12.5, QG=50
+#  rheology isotropic 	: n=3
+#  runtime 		: 10 000a, dt =5a
+#  updated age solver 	: no initialization (check!!)
+#  accumulation		: asymmetr. from DWGeom.in
+#  bedrock		: real data from DWGeom.in
+#  initial surface	: real data from DWGeom.in
+#  divide position	: 200 m offset
+#  boundary		: mass conserving plug flow
+#  resolution		:  600 x 60 from mesh.grd 
+#  domain x		:-10--10 km from mesh.grd 
+#  thinning		: none 
+
+! Density in kg m-3
+$Density = 910
+!  Gravity in m s-2
+$g = 9.81
+! Temperature at the surface in Celsius
+$Ts = -12.5
+! Geothermal flux in mW m-2
+$QG=50.0
+! Ice thickness in m
+$H = 500
+! accumulation in m/yr
+$accumulation = 0.2
+! Forced position of the divide    <<<<<<<<<<-----------------------------------New
+$ xdiv=175
+! x Coordinate of linear vertical ouput in m 
+$IceCorePosition = 0.0
+
+!!   n=3 !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
+$n = 3.0
+$Factor=1.0 
+
+
+!! conductivity
+$ function conductivity(T)  { _conductivity=9.828*exp(-5.7E-03*T)}
+!! capacity
+$ function capacity(T) { _capacity=146.3+(7.253*T)}
+
+!! Rate Factor
+$ function A(T) { _A = 1.0e-15*(0.2071*exp(0.5978*(T-273.15))+0.09833*exp(0.14747*(T-273.15)))}
+
+
+Header
+  Mesh DB "." "mesh"
+  Include Path ""
+  Results Directory ""
+End
+
+Constants
+End
+
+Simulation
+  Coordinate System = "Cartesian 2D" 
+  Simulation Type = "Transient"
+
+  Timestepping Method = "bdf"
+  BDF Order = 1
+  Timestep Intervals = 2000
+  Output Intervals = 200
+  Timestep Sizes = 5 
+
+  Steady State Min Iterations = 1
+  Steady State Max Iterations = 1
+
+  Set Dirichlet BCs By BC Numbering = Logical True
+  Initialize Dirichlet Conditions = Logical True
+  Output File = "Result.dat"
+  max output level = 3
+End
+
+Body 1
+  name = Ice
+  Equation = 1
+  Material = 1
+  Body force = 1
+  Initial Condition = 1
+End
+
+Body 2
+  name = Surface
+  Equation = 2
+  Material = 1
+  Body force = 2
+  Initial Condition = 2
+End
+
+Body Force 1
+  Flow BodyForce 1 = Real 0.0
+  Flow BodyForce 2 = Real MATC "-g*(31556926.0)^(2.0)"
+  Friction Heat = Logical True 
+End
+
+Body Force 2
+  hs Accumulation Flux 1 = Real 0.0e0
+  hs Accumulation Flux 2 = Equals Acc   
+  Divide Position = Real $ xdiv   
+End
+
+Initial Condition 1
+  Depth = Variable Coordinate 2
+   Real MATC "H-tx"
+  Height = Variable Coordinate 2
+   Real MATC "tx"
+  Temperature = Real $ 273.15+Ts
+ ! Assume linear vertical velocity with a=0.1 m=0.001                             
+ ! Age=H/a*log((m+a)/(m+a/H*(z-hb)));
+ !!! Changed RD, it seems that for t<dt depth and height are not calculated
+ !!! In current_carlos this is caught with a if () in BC 
+ !!! Apparently it also works not to initialize at all. Weired.                                          
+ ! Age=Variable Depth, Height                                                    
+ !   Real MATC "H/accumulation*log((accumulation+0.01)/(0.01+accumulation/H*tx(1)))"     
+End
+
+Initial Condition 2
+  hs = Equals Coordinate 2
+  hsREF = Equals Coordinate 2
+End
+
+Material 1
+  Density = Real MATC "Density*1.0E-06*(31556926.0)^(-2.0)"
+  Viscosity Model = String "power law"
+  Viscosity Exponent = Real $ 1.0/n
+  Critical Shear Rate = Real $ 1.0e-3/31556926.0
+  Viscosity = Variable Temperature  ! 10e-6/(2A)^(1/3) MPa a^1/3
+    Real  MATC "1.0e-6*pow(2.0*A(tx)*Factor,-1.0/n)"
+
+  ! Heat transfer stuff
+  !--------
+  Heat Capacity = Variable Temperature
+    Real MATC "capacity(tx)*(31556926.0)^(2.0)"
+  Heat Conductivity = Variable Temperature
+    Real MATC "conductivity(tx)*(31556926.0)*1.0E-06"
+End
+
+!!!!! SOLVERS
+Solver 1
+  Equation = "Mesh Update"
+  Exec Solver = "Before Timestep"
+  Linear System Solver = "Iterative"
+  Linear System Max Iterations = 500
+  Linear System Iterative Method = "BiCGStab"
+  Linear System Preconditioning = None
+  Linear System Convergence Tolerance = Real 1.0e-6
+  Linear System Residual Output = 0
+End
+
+! This solves the depth underneath the free surface
+!--------------------------------------------------
+Solver 2
+  Equation = "Flowdepth"
+  Exec Solver = "Before Timestep"
+  Procedure = File "src/Flowdepth" "FlowDepthSolver"
+  Variable = String "Depth"
+  Variable DOFs = 1
+
+  Linear System Solver = "Iterative" 
+  Linear System Iterative Method = "BiCGstab"
+  Linear System Max Iterations = 100
+  Linear System Convergence Tolerance = 1.0E-08
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU0"
+  Linear System Residual Output = 0
+
+  Gradient = Real -1.0E00
+  ! switch that to True, if you
+  ! want to have free surface gradients
+  ! to be computed
+  !------------------------------------
+  Calc Free Surface = Logical True
+  Freesurf Name = String "FreeSurf"
+End
+
+! This solves the height above the bedrock
+!------------------------------------------
+Solver 3
+  Equation = "Flowheight" ! mind different name
+  Exec Solver = "Before Timestep"
+  Procedure = File "src/Flowdepth" "FlowDepthSolver"
+  Variable = String "Height" ! mind different name for variable
+  Variable DOFs = 1
+
+  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "BiCGstab"
+  Linear System Max Iterations = 100
+  Linear System Convergence Tolerance = 1.0E-08
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU0"
+  Linear System Residual Output = 0
+
+  Gradient = Real 1.0E00 ! this time positive
+  Calc Free Surface = Logical False
+End
+
+!  Reads Accumulation (Acc) from DW_Geom.in
+!  And integrate Acc from the divide position (xdiv) to the flanks (Qx)
+Solver 4
+  Equation = "MassIn"
+  Exec Solver = "Before All"
+
+  Variable = String "Qx"
+  Variable DOFs =  1
+  Exported Variable 1 = String "acc"
+  Exported Variable 1 DOFs = 1
+
+  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "BiCGstab"
+  Linear System Max Iterations = 100
+  Linear System Convergence Tolerance = 1.0E-08
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU0"
+  Linear System Residual Output = 0
+
+
+  Procedure = "./src/MassInSolver" "MassInSolver"
+End
+
+
+!  Calculates horizontal velocity approximation to use as BC at the flanks
+!  At the moment uses plug-flow: u = integral_xdid^x{Acc}dx / H ; w = Acc * 
+Solver 5  
+  Equation = "USIA Anisotropic"
+  Exec Solver = "Before TimeStep"
+
+  Variable = String "USIA"
+  Variable DOFs =  1
+
+  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "Diagonal"
+  Linear System Max Iterations = 1
+  Linear System Convergence Tolerance = 1.0e-6
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "None"
+  Linear System Residual Output = 0
+
+  Procedure = "./src/USIASolver" "USIASolver"
+End
+
+Solver 6
+  Equation = "Heat Equation"
+
+  Anisotropic = Logical False
+
+  Stabilization Method = String "Stabilized"
+!   Stabilization Method = String "Bubbles"
+
+!   Linear System Solver = "Direct"
+!   Linear System Direct Method = "Mumps"
+!   Linear System Direct Method = "Umfpack"
+  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "BiCGStab"
+  Linear System Max Iterations = 300
+  Linear System Convergence Tolerance = 1.0e-6
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU2"
+  Linear System Residual Output = 0
+  
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Convergence Tolerance = 1.0e-5
+  Nonlinear System Newton After Iterations = 3
+  Nonlinear System Newton After Tolerance = 1.0e-4
+  Nonlinear System Relaxation Factor = 1
+
+  Steady State Convergence Tolerance = 1.0e-03
+End
+
+Solver 7
+  Equation = "Navier-Stokes"
+  Flow model = String "Stokes"
+
+  Stabilization Method = String "Stabilized"
+!   Stabilization Method = String "Bubbles"
+
+   Linear System Solver = "Direct"
+!  Linear System Direct Method = "Mumps"
+!    Linear System Direct Method = "Umfpack"
+
+!  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "BiCGStab"
+  Linear System Max Iterations = 300
+  Linear System Convergence Tolerance = 1.0e-8
+  Linear System Abort Not Converged = False
+  Linear System Preconditioning = "ILU2"
+  Linear System Residual Output = 0
+  
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Convergence Tolerance = 1.0e-7
+  Nonlinear System Newton After Iterations = 3
+  Nonlinear System Newton After Tolerance = 1.0e-6
+  Nonlinear System Relaxation Factor = 1
+
+  Steady State Convergence Tolerance = 1.0e-05
+End
+
+
+Solver 8
+  Equation =  String "Free Surface Evolution"
+  Exec Solver = "After TimeStep"
+  Variable = "hS"
+
+  Procedure = "FreeSurfaceSolver" "FreeSurfaceSolver"
+
+  Linear System Solver = "Iterative"
+  Linear System Iterative Method = "BiCGStab"
+!  Linear System Direct Method = "MUMPS"
+!  Linear System Direct Method = "UMFPACK"
+  Linear System Max Iterations  = 500
+  Linear System Preconditioning = ILU0
+  Linear System Convergence Tolerance = 1.0e-07
+
+  Apply Dirichlet = Logical False
+  Nonlinear System Max Iterations = 1
+  Nonlinear System Min Iterations = 1
+  Nonlinear System Convergence Tolerance = 1.0e-06
+
+  Steady State Convergence Tolerance = 1.0e-5
+  Stabilization Method = Stabilize
+ 
+  Flow Solution Name = String "Flow Solution"
+ 
+  Exported Variable 1 =  hs Residual
+  Exported Variable 1 DOFS = 1
+  Exported Variable 2 = hsREF
+  Exported Variable 2 DOFS = 1
+End
+
+!  Age Solver
+!
+Solver 9
+   Equation = "Age Equation"
+   Exec Solver =  "After Timestep"
+   !Exec Solver = "Never"
+
+   Variable = String "Age"
+   Variable DOFs =  1
+
+   Linear System Solver = "Iterative"
+   Linear System Max Iterations = 300
+   Linear System Iterative Method = Diagonal
+   Linear System Preconditioning = NoNe
+   Linear System Convergence Tolerance = Real 1.0e-6
+   Linear System Abort Not Converged = False
+   Linear System Residual Output = 0
+
+   Procedure = "./src/AgeSolver" "AgeSolver"
+End
+
+
+! Save surface data
+!
+Solver 10
+  Equation = "Surface Data"
+  Exec Solver = "After Saving"
+  Procedure = "SaveData" "SaveLine"
+  Filename =  "surface.dat"
+  File Append = Logical False
+  Polyline Coordinates(2,2) = Real $ IceCorePosition -250 IceCorePosition 1250
+End
+
+!  Save output in vtu format 
+Solver 11
+  Equation = "VTU Output"
+  Exec Solver = "After Saving"
+  Procedure = "ResultOutputSolve" "ResultOutputSolver"
+  Output File Name = "output"
+  Output Format = String "vtu"
+  Vector Field 1 = Velocity
+  Scalar Field 1 = String "Depth"
+  Scalar Field 2 = String "Height"
+  Scalar Field 3 = String "Pressure"
+  Scalar Field 4 = String "Temperature"
+  Scalar Field 5 = String "Age"
+End
+
+!!!!! EQUATION
+Equation 1
+  Active Solvers (9) = 1 2 3 5 6 7 9 10 11
+  Flow Solution Name = String "Flow Solution"
+  Convection = "Computed"
+End
+
+Equation 2
+  Active Solvers (2) = 4 8
+  Flow Solution Name = String "Flow Solution"
+  Convection = "Computed"
+End
+
+!!!!! BOUNDARY CONDITIONS
+
+Boundary Condition 1
+  name = Bedrock
+  Target Boundaries = 1 
+
+  Velocity 1 = Real 0.0
+  Velocity 2 = Real 0.0
+
+  Height = Real 0.0
+
+  Heat Flux = Real $ QG * 1.0e-3 * (31556926.0)*1.0E-06
+ !Temperature = Real 273.15
+  Temperature Condition = Variable Temperature
+    Real MATC "if ( tx > 273.15 ) {1.0} else {-1.0} "
+
+!  Age = Variable Age
+!     Real MATC "tx+(H/accumulation/200.0)"
+
+
+  Mesh Update 1 = Real 0.0
+  Mesh Update 2 = Real 0.0
+
+  Save Line = Logical True
+End
+
+
+Boundary Condition 2
+  name = Surface
+  Target Boundaries = 3
+  Body ID = 2
+  Upper Surface = Logical True
+
+  Temperature = Real $ 273.15+Ts
+  Depth = Real 0.0
+
+  Mesh Update 1 = Real 0.0
+  Mesh Update 2 = Variable hs, hsREF
+   Real MATC "tx(0)-tx(1)"
+
+  Age = Real 0.0
+
+  Save Line = Logical True
+End
+
+Boundary Condition 3
+  name = East
+  Target Boundaries = 2
+
+  Velocity 1 = Equals USIA 
+  Velocity 2 = Variable Coordinate 1, Depth, Height,Acc 
+    Real MATC "-tx(3) * tx(2) / (tx(1)+tx(2))"   
+
+   !Numerical trick here for the MassIn solver
+   Qx = Real 0.0  
+
+  Mesh Update 1 = Real 0.0
+  Save Line = Logical False
+End
+
+Boundary Condition 4
+  name = West
+  Target Boundaries = 4
+  Velocity 1 = Equals USIA 
+  Velocity 2 = Variable Coordinate 1, Depth, Height,Acc 
+    Real MATC "-tx(3) * tx(2) / (tx(1)+tx(2))"   
+  Mesh Update 1 = Real 0.0
+  Save Line = Logical False
+End
