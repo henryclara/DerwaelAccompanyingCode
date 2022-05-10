@@ -1,0 +1,114 @@
+Header
+ Mesh DB "." "rect"
+End
+
+Simulation
+ Coordinate System = "Cartesian 2D"
+ Coordinate Mapping(3) = 1 2 3
+ Simulation Type = Transient
+ TimeStepping Method = BDF
+ BDF Order = 1
+ Timestep Intervals(1) = 1200000000
+ Timestep Size = .001 	
+ Output Intervals(1) = 100  
+ Output File = "case.result"
+ Output File Cycle = 2 ! save results to files 0,1,0,1,.. (when 2) 
+
+ Binary Output = Logical True ! ascii format is the default so select binary as it saves disk space
+
+ Output Global Variables = True 
+
+ Max Output Level = 20
+ Max Output Partition = 2
+
+End
+
+Constants
+  Permittivity of Vacuum = 8.8542e-12
+End
+
+Body 1
+  Target Bodies(1) = 1 
+  Name = "Air"
+  Equation = 1
+  Material = 1 
+  Body Force = 1
+  Initial Condition = 1
+End
+
+Equation 1
+  Name = "Poisson"
+  Active Solvers(2) = 1 2
+End
+
+
+Material 1 
+  Name = "Material 1"
+
+  Heat Conductivity = .026   ! W/m/K air
+  Compressibility Model = Perfect Gas Equation 1
+  Viscosity = 1.78e-05     !kg/m-s air
+  Specific Heat Ratio = 1.4
+  Heat Capacity = 1004.0   !cp (at constant pressure) in J/kg K
+  Reference Pressure = 0.0
+
+End
+
+
+Initial Condition 1
+
+  vtuflag = Real -1.0
+
+  Velocity 1 = 50.0 
+  Velocity 2 = 0.0
+  Velocity 3 = 0.0 
+  Pressure = 101325.0  
+  Temperature = 300.0
+  Potential Grad 1 = Real 0.0
+  Potential Grad 2 = Real 0.0
+  Potential Grad 3 = Real 0.0
+End
+
+
+Boundary Condition 1
+  Target Boundaries(1) = 1
+  Name = "FarField"
+  Potential Grad 1 = Real 0.0
+  Potential Grad 2 = Real 0.0
+  Potential Grad 3 = Real 0.0
+  Velocity 1 = 50.0 
+  Velocity 2 = 0.0
+  Velocity 3 = 0.0 
+  Pressure = 101325.0  
+  Temperature = 300.0
+End
+
+
+Body Force 1
+  Name = "BodyForce 1"
+  Charge Density = 0.  
+End
+
+
+Solver 1
+  Equation = "Poisson"
+  Variable = "Potential"
+  Variable DOFs = 1
+
+  Exported Variable 1 = -global vtuflag
+
+  Exec Solver = Always 
+  Procedure = "volt" "AirElectrodePotential"
+End
+
+Solver 2
+Exec Condition = Equals vtuflag
+Equation = "result vtu"
+Procedure = "ResultOutputSolve" "ResultOutputSolver"
+Output File Name = "parav"
+Vtu Format = Logical True
+Single Precision = Logical True ! double precision is the default
+! In the Vtu format all fields are saved if the user does not list them explicitly.
+Scalar Field 1 = String Potential 
+End
+
