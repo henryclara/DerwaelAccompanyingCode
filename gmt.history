@@ -1,4 +1,0 @@
-# GMT 6 Session common arguments shelf
-BEGIN GMT 6.3.0
-R	900750/1007590/1080000/2065720
-END
